@@ -1,0 +1,388 @@
+# Lab 06 – Exploring Scapy on a SEED Ubuntu VM
+
+In this lab, I used Scapy to build network packets in Python, inspect their headers, send an ICMP Echo Request, and capture live traffic. The screenshots show the commands and output from my SEED Ubuntu VM.
+
+I followed the [original Scapy lab guide](https://github.com/ivanaislam/Network-and-Internet-Security/tree/94f115cc215987ae71437b2d82750be34ebb4f71/lab-06-scapy).
+
+## Environment and setup
+
+| Item | Value in my run |
+|---|---|
+| Operating system | SEED Ubuntu VM |
+| Scapy version | 2.4.4 |
+| VM address shown in the captures | `10.0.2.15` |
+| ICMP destination | `8.8.8.8` |
+| Terminal appearance | Black text on a white background |
+
+Run the following commands from the `lab-06-scapy` directory. Sending and capturing packets requires elevated privileges on this VM. Use the live exercises on a network where you have permission to capture traffic.
+
+```bash
+python3 -m pip install -r requirements.txt
+sudo scapy
+```
+
+The `requirements.txt` file contains:
+
+```text
+scapy>=2.4.4
+```
+
+The examples below run at Scapy’s `>>>` prompt unless marked as Bash. If your installed version differs from 2.4.4, the welcome screen and field formatting may look different.
+
+## Repository layout
+
+```text
+lab-06-scapy/
+├── README.md
+├── requirements.txt
+├── images/              # Screenshots from my VM, including continuation pages
+└── scripts/             # Python files for the lessons, challenges, and bonuses
+```
+
+All 23 main screenshots appear below. For longer terminal output, the `images/` directory also contains files ending in `-page02.png`, `-page03.png`, and so on. The extra pages are especially useful for the command list and the live packet callback.
+
+## 1. Explore Scapy
+
+After starting Scapy, I checked the version in the welcome banner.
+
+![Scapy 2.4.4 welcome screen on the SEED VM](images/01-launch-scapy.png)
+
+I used `lsc()` to list Scapy commands and `ls(IP)` to inspect the fields of an IPv4 header.
+
+```python
+from scapy.all import ls, lsc, IP, TCP, ICMP
+
+lsc()
+print("--- Fields in an IP Header ---")
+ls(IP)
+```
+
+![Scapy command list from lsc()](images/02-lsc-output.png)
+
+![IPv4 header fields from ls(IP)](images/03-ls-ip-fields.png)
+
+**Script:** `scripts/01_explore_layers.py`
+
+## 2. Create and customize packets
+
+I created an IPv4 packet and printed its default fields. On my VM, `IP()` showed `127.0.0.1` for both addresses and `64` for the TTL.
+
+```python
+from scapy.all import IP, TCP
+
+my_packet = IP()
+print("Source IP:", my_packet.src)
+print("Destination IP:", my_packet.dst)
+print("TTL:", my_packet.ttl)
+```
+
+![Default IPv4 addresses and TTL](images/04-ip-defaults.png)
+
+I then set the destination and TTL explicitly.
+
+```python
+custom_ip = IP(dst="8.8.8.8", ttl=128)
+print("Custom Dest:", custom_ip.dst)
+print("Custom TTL:", custom_ip.ttl)
+```
+
+![Custom IPv4 destination and TTL](images/05-ip-custom-fields.png)
+
+I also created a TCP layer with destination port `443`. Scapy displayed its default source port as `20`.
+
+```python
+t = TCP(dport=443)
+print("Source Port:", t.sport)
+print("Destination Port:", t.dport)
+```
+
+![TCP source and destination ports](images/06-tcp-defaults.png)
+
+**Script:** `scripts/02_craft_packets.py`
+
+## 3. Stack layers and inspect calculated fields
+
+Scapy uses `/` to stack layers. I built an IPv4 packet carrying an ICMP Echo Request and an 11-byte payload.
+
+```python
+from scapy.all import IP, ICMP, Raw
+
+ping_pkt = IP(dst="1.1.1.1") / ICMP() / Raw(b"Hello World")
+print(ping_pkt.summary())
+ping_pkt.show()
+```
+
+![Stacked IP, ICMP, and Raw layers](images/07-stacking-summary-show.png)
+
+I compared `show()` and `show2()` on the same packet.
+
+```python
+ping_pkt.show()
+ping_pkt.show2()
+```
+
+![Packet fields before Scapy builds the packet](images/08-show-before-build.png)
+
+![Calculated packet fields after Scapy builds the packet](images/09-show2-after-build.png)
+
+`show()` displayed automatic fields such as the IPv4 length and checksum as `None`. `show2()` built the packet and displayed the calculated values. The total length was **39 bytes**: 20 bytes for IPv4, 8 for ICMP, and 11 for `Hello World`.
+
+**Script:** `scripts/03_stacking_show_show2.py`
+
+## 4. Read raw bytes and a hex dump
+
+```python
+from scapy.all import IP, ICMP, hexdump
+
+pkt = IP(dst="192.168.1.1") / ICMP()
+raw_bytes = bytes(pkt)
+
+print("Raw Bytes:", raw_bytes)
+print("Packet Length in bytes:", len(raw_bytes))
+hexdump(pkt)
+```
+
+![Raw packet bytes and hexadecimal output](images/10-bytes-hexdump.png)
+
+This packet was **28 bytes** long. It had a 20-byte IPv4 header and an 8-byte ICMP header. In the hex dump, `00 1c` is the IPv4 total-length field: hexadecimal `1c` equals decimal `28`.
+
+**Script:** `scripts/04_bytes_hexdump.py`
+
+## 5. Inspect and modify a packet
+
+I built an IPv4/TCP packet, read its fields, and checked which layers it contained. This example only constructs and inspects the packet locally.
+
+```python
+from scapy.all import IP, TCP, ICMP
+
+pkt = IP(src="10.0.0.1", dst="10.0.0.2") / TCP(
+    sport=1234, dport=80, flags="S"
+)
+
+print("Destination IP:", pkt[IP].dst)
+print("Destination Port:", pkt[TCP].dport)
+print("TCP Flags:", pkt[TCP].flags)
+
+if pkt.haslayer(TCP):
+    print("This packet contains TCP!")
+if not pkt.haslayer(ICMP):
+    print("This packet does NOT contain ICMP!")
+```
+
+![Reading fields and checking for TCP and ICMP](images/11-haslayer.png)
+
+I changed the destination port to `443`, appended a payload, and displayed the result.
+
+```python
+pkt[TCP].dport = 443
+pkt = pkt / "New Payload Added Later"
+pkt.show()
+```
+
+![Modified TCP packet with the new port and payload](images/12-modify-packet.png)
+
+**Script:** `scripts/05_inspect_modify.py`
+
+## 6. Send an ICMP packet and inspect the reply
+
+First, I used `send()` to transmit one Echo Request. The `Sent!` line confirms the send call completed. To check for a reply, I used `sr1()` in the next step.
+
+```python
+from scapy.all import IP, ICMP, send
+
+pkt = IP(dst="8.8.8.8") / ICMP()
+print("[*] Sending one ping packet...")
+send(pkt, verbose=False)
+print("[+] Sent!")
+```
+
+![Sending one ICMP packet](images/13-send-fire-and-forget.png)
+
+```python
+from scapy.all import sr1
+
+reply = sr1(pkt, timeout=2, verbose=False)
+
+if reply is None:
+    print("No response received within two seconds.")
+else:
+    print("Reply from:", reply.src)
+    print("Response TTL:", reply.ttl)
+    if reply.haslayer(ICMP):
+        print("ICMP Type:", reply[ICMP].type)
+```
+
+![ICMP Echo Reply received from 8.8.8.8](images/14-sr1-ping-reply.png)
+
+My VM received a reply from `8.8.8.8` with ICMP type `0`, which means **Echo Reply**. The response TTL and round-trip time can vary between runs.
+
+**Script:** `scripts/06_send_and_receive.py`
+
+## 7. Capture and filter live traffic
+
+### Capture five packets
+
+```python
+from scapy.all import sniff
+
+packets = sniff(count=5)
+packets.summary()
+```
+
+![Five captured packets, including DNS traffic](images/15-sniff-count5.png)
+
+The summary showed DNS queries and answers. Each line describes the layers Scapy recognized in one captured packet.
+
+### Capture ICMP traffic
+
+I started this capture in Scapy:
+
+```python
+icmp_pkts = sniff(filter="icmp", count=3)
+icmp_pkts.summary()
+```
+
+While the capture was waiting, I generated ICMP traffic with this Bash command:
+
+```bash
+ping 8.8.8.8
+```
+
+![Terminal ping generating ICMP requests and replies](images/17-ping-terminal.png)
+
+![Three ICMP packets captured by Scapy](images/16-sniff-icmp-filter.png)
+
+The ping output showed successful replies. Scapy’s capture showed the Echo Requests and Echo Reply exchanged between `10.0.2.15` and `8.8.8.8`.
+
+### Capture traffic on web ports
+
+```python
+web_pkts = sniff(filter="tcp and (port 80 or port 443)", count=10)
+web_pkts.summary()
+```
+
+![Ten TCP packets captured with the web-port filter](images/18-sniff-bpf-web.png)
+
+I captured ten TCP packets. The summaries showed traffic on port `443`, including TCP flags and packets carrying data.
+
+**Script:** `scripts/07_sniff_basics.py`
+
+### Print packets as they arrive
+
+I used a callback to print the source and destination of each IPv4 packet. For TCP packets, the callback also printed the ports and flags.
+
+```python
+from scapy.all import sniff, IP, TCP
+
+def packet_handler(packet):
+    if packet.haslayer(IP):
+        info = f"[IP] {packet[IP].src} -> {packet[IP].dst} (Proto: {packet[IP].proto})"
+        if packet.haslayer(TCP):
+            info += f" | TCP Port: {packet[TCP].sport} -> {packet[TCP].dport}"
+            info += f" | Flags: {packet[TCP].flags}"
+        print(info)
+
+sniff(filter="ip", prn=packet_handler, store=False)
+```
+
+![Live callback printing IP addresses, ports, and TCP flags](images/19-sniff-prn-callback.png)
+
+`prn=packet_handler` calls the function for each matching packet. `store=False` lets Scapy process the traffic without retaining every packet in memory. Press `Ctrl+C` to end a manual capture.
+
+**Script:** `scripts/08_sniff_callback.py`
+
+### Inspect DNS question records
+
+```python
+from scapy.all import sniff, DNS, DNSQR, IP
+
+def handle_packet(pkt):
+    if pkt.haslayer(IP) and pkt.haslayer(DNS) and pkt.haslayer(DNSQR):
+        name = pkt[DNSQR].qname.decode("utf-8", errors="replace")
+        print(f"[DNS Query] {pkt[IP].src} -> {name}")
+
+sniff(filter="udp port 53", prn=handle_packet, store=False)
+```
+
+![DNS question names observed during the capture](images/20-dns-sniffer.png)
+
+The capture included names such as `seedsecuritylabs.org.` and `www.google.com.`. A DNS response can repeat the original question, so the same name can appear in output from both the VM and the DNS server.
+
+**Script:** `scripts/09_dns_sniffer.py`
+
+## 8. Hands-on challenges
+
+### Challenge 1 – Inspect the default protocol field
+
+```python
+from scapy.all import IP
+
+p = IP(dst="192.168.1.254", ttl=42)
+print("Default proto number:", p.proto)
+print("TTL is:", p.ttl)
+```
+
+![IPv4 packet showing protocol 0 and TTL 42](images/21-challenge1.png)
+
+The result was `proto = 0` and `ttl = 42`. The packet contained only an IPv4 layer.
+
+### Challenge 2 – Build and inspect a UDP packet
+
+```python
+from scapy.all import IP, UDP, Raw, hexdump
+
+pkt = IP(dst="8.8.8.8") / UDP(dport=53) / Raw(b"test query")
+print(pkt.summary())
+hexdump(pkt)
+```
+
+![UDP packet summary and hex dump of the test payload](images/22-challenge2.png)
+
+The hex dump ended with the bytes for `test query`. Port `53` is associated with DNS, but the payload in this exercise is a plain byte string.
+
+### Challenge 3 – Identify an Echo Reply
+
+```python
+from scapy.all import IP, ICMP, sr1
+
+response = sr1(IP(dst="8.8.8.8") / ICMP(), timeout=2, verbose=False)
+
+if response and response.haslayer(ICMP):
+    if response[ICMP].type == 0:
+        print("[+] Host is alive!")
+    else:
+        print("Got reply but not an Echo Reply, type is:", response[ICMP].type)
+else:
+    print("No response received")
+```
+
+![Successful ICMP response check in challenge 3](images/23-challenge3.png)
+
+The output was `[+] Host is alive!` because the VM received an ICMP Echo Reply during this run.
+
+**Script:** `scripts/10_challenges.py`
+
+## 9. Bonus files
+
+The repository also contains the original bonus source files. The 23 live figures above cover the main lessons and challenges.
+
+| File | Topic |
+|---|---|
+| `scripts/11_bonus_pcap_save_load.py` | Save captured packets to a PCAP file and read them back |
+| `scripts/12_bonus_dns_request.py` | Inspect a DNS request and response |
+| `scripts/13_bonus_port_scanner.py` | Original lab’s port-scanner source listing |
+
+## Troubleshooting
+
+| What you see | What to check |
+|---|---|
+| `ModuleNotFoundError: No module named 'scapy'` | Run `python3 -m pip install -r requirements.txt` from the directory containing the file. |
+| Permission error while sending or capturing | Start Scapy with `sudo scapy` inside the SEED VM. |
+| A capture waits without printing anything | Generate traffic that matches the filter. For the ICMP exercise, start `ping` in a second terminal. |
+| `sr1()` times out | Check the VM’s network connection. Some networks filter ICMP. |
+| A screenshot appears broken on GitHub | Keep `README.md` beside `images/` and preserve each image’s filename and capitalization. |
+| A screenshot ends before all output is visible | Open the next `-pageNN.png` file for that figure in `images/`. |
+
+## Results
+
+I built and inspected packets at the IP, ICMP, TCP, and UDP layers. The byte-level examples showed how headers and payloads determine packet length. In the live exercises, the VM received an ICMP Echo Reply, captured the requested five general packets, three ICMP packets, and ten web-port packets, and displayed DNS names from captured traffic.
